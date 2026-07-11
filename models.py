@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class ConvBlock(torch.nn.Module):
-    def __init__(self, input_size, output_size, kernel_size=3, stride=2, padding=1, activation='prelu',
+    def __init__(self, input_size, output_size, kernel_size=3, stride=2, padding=1, activation='lrelu',
                  batch_norm=True):
         super(ConvBlock, self).__init__()
         self.conv = torch.nn.Conv2d(input_size, output_size, kernel_size, stride, padding)
@@ -26,7 +26,7 @@ class ConvBlock(torch.nn.Module):
         elif self.activation == 'lrelu':
             return self.lrelu(out)
         elif self.activation == 'prelu':
-            return self.lrelu(out)
+            return self.prelu(out)
         elif self.activation == 'tanh':
             return self.tanh(out)
         elif self.activation == 'no_act':
@@ -99,32 +99,25 @@ class DeconvBlock(nn.Module):
     def forward(self, x):
         out = self.bn(self.deconv(x)) if self.batch_norm else self.deconv(x)
         if self.use_attention:
-            out = self.cbam(out)          # TConv -> IN -> CBAM -> LeakyReLU，与Fig.2一致
+            out = self.cbam(out)          # TConv -> IN -> CBAM -> LeakyReLU，
         return self.lrelu(out)
 
 
 class ResnetBlock(torch.nn.Module):
     def __init__(self, num_filter, kernel_size=3, stride=1, padding=0):
         super(ResnetBlock, self).__init__()
-        conv1 = torch.nn.Conv2d(num_filter, num_filter, kernel_size, stride, padding)
-        conv2 = torch.nn.Conv2d(num_filter, num_filter, kernel_size, stride, padding)
-        bn = torch.nn.InstanceNorm2d(num_filter)
-        relu = torch.nn.ReLU(True)
-        pad = torch.nn.ReflectionPad2d(1)
-
         self.resnet_block = torch.nn.Sequential(
-            pad,
-            conv1,
-            bn,
-            relu,
-            pad,
-            conv2,
-            bn
+            torch.nn.ReflectionPad2d(1),
+            torch.nn.Conv2d(num_filter, num_filter, kernel_size, stride, padding),
+            torch.nn.InstanceNorm2d(num_filter),
+            torch.nn.ReLU(True),
+            torch.nn.ReflectionPad2d(1),
+            torch.nn.Conv2d(num_filter, num_filter, kernel_size, stride, padding),
+            torch.nn.InstanceNorm2d(num_filter),
         )
 
     def forward(self, x):
-        out = self.resnet_block(x)
-        return out
+        return x + self.resnet_block(x)
 
 
 class Generator(torch.nn.Module):
@@ -134,25 +127,21 @@ class Generator(torch.nn.Module):
         # Reflection padding
         self.pad = torch.nn.ReflectionPad2d(3)
 
-        # Encoder
-        self.conv1 = ConvBlock(input_dim, num_filter, kernel_size=7, stride=1, padding=0)
-        self.conv2 = ConvBlock(num_filter, num_filter * 2)
-        self.conv3 = ConvBlock(num_filter * 2, num_filter * 4)
+        self.conv1 = ConvBlock(input_dim, num_filter, kernel_size=7, stride=1, padding=0, activation='lrelu')
+        self.conv2 = ConvBlock(num_filter, num_filter * 2, activation='lrelu')
+        self.conv3 = ConvBlock(num_filter * 2, num_filter * 4, activation='lrelu')
         # Resnet blocks
         self.resnet_blocks = []
         for i in range(num_resnet):
             self.resnet_blocks.append(ResnetBlock(num_filter * 4))
         self.resnet_blocks = torch.nn.Sequential(*self.resnet_blocks)
         # Decoder
-
-        self.deconv1 = DeconvBlock(num_filter * 4, num_filter * 2, use_attention=True)  #
-        self.deconv2 = DeconvBlock(num_filter * 2, num_filter, use_attention=True)  #
+        self.deconv1 = DeconvBlock(num_filter * 4, num_filter * 2, use_attention=True)
+        self.deconv2 = DeconvBlock(num_filter * 2, num_filter, use_attention=True)
         self.deconv3 = ConvBlock(num_filter, output_dim, kernel_size=7, stride=1, padding=0, activation='tanh',
                                  batch_norm=False)
 
     def forward(self, mask):
-
-        # ------------------------
         # Encoder
         enc1 = self.conv1(self.pad(mask))
         enc2 = self.conv2(enc1)
@@ -163,18 +152,14 @@ class Generator(torch.nn.Module):
         dec1 = self.deconv1(res)
         dec2 = self.deconv2(dec1)
         out = self.deconv3(self.pad(dec2))
-
         return out
 
     def normal_weight_init(self, mean=0.0, std=0.02):
-        for m in self.children():
-            if isinstance(m, ConvBlock):
-                torch.nn.init.normal_(m.conv.weight, mean, std)
-            if isinstance(m, DeconvBlock):
-                torch.nn.init.normal_(m.deconv.weight, mean, std)
-            if isinstance(m, ResnetBlock):
-                torch.nn.init.normal_(m.conv.weight, mean, std)
-                torch.nn.init.constant_(m.conv.bias, 0)
+        for m in self.modules():
+            if isinstance(m, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
+                torch.nn.init.normal_(m.weight, mean, std)
+                if m.bias is not None:
+                    torch.nn.init.constant_(m.bias, 0)
 
 
 class Discriminator(torch.nn.Module):
@@ -201,6 +186,8 @@ class Discriminator(torch.nn.Module):
         return out
 
     def normal_weight_init(self, mean=0.0, std=0.02):
-        for m in self.children():
-            if isinstance(m, ConvBlock):
-                torch.nn.init.normal_(m.conv.weight.data, mean, std)
+        for m in self.modules():
+            if isinstance(m, torch.nn.Conv2d):
+                torch.nn.init.normal_(m.weight, mean, std)
+                if m.bias is not None:
+                    torch.nn.init.constant_(m.bias, 0)
