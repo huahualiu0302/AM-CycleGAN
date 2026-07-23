@@ -56,16 +56,6 @@ Training reads two NumPy arrays produced by LBM simulation:
 - `Banderagray_size200_xdrive_num500.npy` — domain A (pressure gradient along x)
 - `Banderagray_size200_ydrive_num500.npy` — domain B (pressure gradient along y)
 
-Each array has shape `(N, 4, 200, 200)`, where for every 200×200 slice the four
-channels are:
-
-| Index | Content |
-| --- | --- |
-| 0 | Binary geometry (0 = pore, 1 = grain) |
-| 1 | (reserved) |
-| 2 | LBM velocity component `vx` |
-| 3 | LBM velocity component `vy` |
-
 The scalar velocity magnitude `v = sqrt(vx**2 + vy**2)` is computed internally
 and used as the modeling target.
 
